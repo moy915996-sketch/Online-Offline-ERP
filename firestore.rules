@@ -1,0 +1,283 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    // Collection: products
+    // Fields: name (string), sku (string), category (string), price (number), cost (number), stock (number), stockLeft (number), stockRight (number), unit (string)
+    //
+    // Collection: suppliers
+    // Fields: name (string), contact (string), email (string), phone (string)
+    //
+    // Collection: customers
+    // Fields: name (string), email (string), phone (string)
+    //
+    // Collection: purchases
+    // Fields: supplierId (string), date (string), items (list of maps), total (number)
+    //
+    // Collection: sales
+    // Fields: customerId (string), date (string), items (list of maps), total (number)
+    //
+    // Collection: transactions
+    // Fields: date (string), description (string), type (string: income|expense), amount (number), category (string)
+    //
+    // Collection: transfers
+    // Fields: fromWarehouseId (string), toWarehouseId (string), productId (string), quantityLeft (number), quantityRight (number), date (string)
+    //
+    // Collection: returns
+    // Fields: saleId (string), date (string), items (list of maps), totalRefund (number), status (string)
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (
+          (request.auth.token.email != null && (request.auth.token.email.matches("(?i)yahia167199@gmail.com") || request.auth.token.email.matches("(?i)moy915996@gmail.com"))) ||
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+        );
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+    function isValidProduct(data) {
+      return hasRequiredFields(['name', 'sku', 'price', 'cost', 'stock', 'stockLeft', 'stockRight', 'unit', 'warehouseId']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 500 &&
+             data.sku is string && data.sku.size() > 0 && data.sku.size() < 100 &&
+             data.price is number && data.price >= 0 &&
+             data.cost is number && data.cost >= 0 &&
+             data.stock is number &&
+             data.stockLeft is number &&
+             data.stockRight is number &&
+             data.unit is string &&
+             data.warehouseId is string &&
+             (!('pieceType' in data) || data.pieceType in ['single', 'pair']) &&
+             (!('piecesPerCarton' in data) || (data.piecesPerCarton is number && data.piecesPerCarton >= 0)) &&
+             (!('cartonPrice' in data) || (data.cartonPrice is number && data.cartonPrice >= 0)) &&
+             (!('cartonCost' in data) || (data.cartonCost is number && data.cartonCost >= 0)) &&
+             (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() < 2000000)) &&
+             (!('category' in data) || data.category is string) &&
+             (!('subCategory' in data) || data.subCategory is string) &&
+             (!('brand' in data) || data.brand is string) &&
+             (!('color' in data) || data.color is string) &&
+             (!('size' in data) || data.size is string) &&
+             (!('barcode' in data) || data.barcode is string);
+    }
+
+    function isValidSupplier(data) {
+      return hasRequiredFields(['name']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             (!('email' in data) || (data.email is string && data.email.size() < 100)) &&
+             (!('phone' in data) || (data.phone is string && data.phone.size() < 20));
+    }
+
+    function isValidCustomer(data) {
+      return hasRequiredFields(['name']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             (!('email' in data) || (data.email is string && data.email.size() < 100)) &&
+             (!('phone' in data) || (data.phone is string && data.phone.size() < 20));
+    }
+
+    function isValidPurchase(data) {
+      return hasRequiredFields(['supplierId', 'date', 'items', 'total']) &&
+             data.supplierId is string &&
+             data.items is list &&
+             data.total is number && data.total >= 0 &&
+             (!('totalDiscount' in data) || data.totalDiscount is number) &&
+             (!('discountType' in data) || data.discountType in ['percentage', 'fixed']) &&
+             (!('invoiceUrl' in data) || (data.invoiceUrl is string && data.invoiceUrl.size() < 1000000));
+    }
+
+    function isValidSale(data) {
+      return hasRequiredFields(['invoiceNumber', 'customerId', 'date', 'items', 'total', 'paymentMethod']) &&
+             data.invoiceNumber is string &&
+             data.customerId is string &&
+             data.items is list &&
+             data.total is number && data.total >= 0 &&
+             data.paymentMethod in ['cash', 'card', 'other'] &&
+             (!('discount' in data) || data.discount is number) &&
+             (!('tax' in data) || data.tax is number);
+    }
+
+    function isValidTransaction(data) {
+      return hasRequiredFields(['date', 'description', 'type', 'amount']) &&
+             data.description is string && data.description.size() < 500 &&
+             data.type in ['income', 'expense'] &&
+             data.amount is number && data.amount >= 0 &&
+             (!('category' in data) || data.category is string) &&
+             (!('referenceId' in data) || data.referenceId is string) &&
+             (!('attachmentUrl' in data) || (data.attachmentUrl is string && data.attachmentUrl.size() < 1000000));
+    }
+
+    function isValidTransfer(data) {
+      return hasRequiredFields(['fromWarehouseId', 'toWarehouseId', 'productId', 'quantityLeft', 'quantityRight', 'date']) &&
+             data.fromWarehouseId is string &&
+             data.toWarehouseId is string &&
+             data.productId is string &&
+             data.quantityLeft is number &&
+             data.quantityRight is number &&
+             data.date is string;
+    }
+
+    function isValidReturn(data) {
+      return hasRequiredFields(['date', 'items', 'totalRefund', 'status', 'type']) &&
+             data.date is string &&
+             data.items is list &&
+             data.totalRefund is number &&
+             data.status in ['completed', 'pending'] &&
+             data.type in ['sale', 'purchase'] &&
+             (!('saleId' in data) || data.saleId is string) &&
+             (!('purchaseId' in data) || data.purchaseId is string) &&
+             (!('customerId' in data) || data.customerId is string) &&
+             (!('supplierId' in data) || data.supplierId is string);
+    }
+
+    function hasPermission(screenId, action) {
+      return isAuthenticated() && (
+        isAdmin() || (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true &&
+          screenId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.allowedScreens &&
+          action in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.permissions[screenId] &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.permissions[screenId][action] == true
+        )
+      );
+    }
+
+    function isRecent(dateStr) {
+      return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+    
+    function isValidUser(data) {
+      return hasRequiredFields(['email', 'role', 'isActive']) &&
+             data.email is string &&
+             data.role in ['admin', 'user'] &&
+             data.isActive is bool &&
+             (!('uid' in data) || data.uid is string) &&
+             (!('displayName' in data) || data.displayName is string) &&
+             (!('allowedScreens' in data) || data.allowedScreens is list) &&
+             (!('permissions' in data) || data.permissions is map) &&
+             (!('screenCredentials' in data) || data.screenCredentials is map);
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && (isAdmin() || request.auth.uid == userId || request.auth.token.email == userId) && isValidUser(request.resource.data);
+      allow update: if isAuthenticated() && (
+        isAdmin() || request.auth.uid == userId || request.auth.token.email == userId
+      ) && isValidUser(request.resource.data);
+      allow delete: if isAdmin() || (isAuthenticated() && (
+        request.auth.uid == userId || 
+        request.auth.token.email == userId ||
+        (resource != null && resource.data.email == request.auth.token.email)
+      ));
+    }
+
+    match /products/{productId} {
+      allow read: if isAuthenticated();
+      allow create: if hasPermission('inventory', 'canAdd') && isValidProduct(request.resource.data);
+      allow update: if (hasPermission('inventory', 'canEdit') || hasPermission('cashier', 'canAdd')) && isValidProduct(request.resource.data);
+      allow delete: if hasPermission('inventory', 'canDelete');
+    }
+
+    match /warehouses/{warehouseId} {
+      allow read: if isAuthenticated();
+      allow create: if hasPermission('warehouses', 'canAdd') && hasRequiredFields(['name']);
+      allow update: if hasPermission('warehouses', 'canEdit') && hasRequiredFields(['name']);
+      allow delete: if hasPermission('warehouses', 'canDelete');
+    }
+
+    match /suppliers/{supplierId} {
+      allow read: if isAuthenticated();
+      allow create: if hasPermission('suppliers', 'canAdd') && isValidSupplier(request.resource.data);
+      allow update: if hasPermission('suppliers', 'canEdit') && isValidSupplier(request.resource.data);
+      allow delete: if hasPermission('suppliers', 'canDelete');
+    }
+
+    match /customers/{customerId} {
+      allow read: if isAuthenticated();
+      allow create: if (hasPermission('customers', 'canAdd') || hasPermission('cashier', 'canAdd')) && isValidCustomer(request.resource.data);
+      allow update: if (hasPermission('customers', 'canEdit') || hasPermission('cashier', 'canEdit')) && isValidCustomer(request.resource.data);
+      allow delete: if hasPermission('customers', 'canDelete') || hasPermission('cashier', 'canDelete');
+    }
+
+    match /purchases/{purchaseId} {
+      allow read: if isAuthenticated();
+      allow create: if hasPermission('purchases', 'canAdd') && isValidPurchase(request.resource.data);
+      allow update: if hasPermission('purchases', 'canEdit');
+      allow delete: if hasPermission('purchases', 'canDelete');
+    }
+
+    match /sales/{saleId} {
+      allow read: if isAuthenticated();
+      allow create: if (hasPermission('sales', 'canAdd') || hasPermission('cashier', 'canAdd')) && isValidSale(request.resource.data);
+      allow update: if hasPermission('sales', 'canEdit') || hasPermission('cashier', 'canEdit');
+      allow delete: if hasPermission('sales', 'canDelete') || hasPermission('cashier', 'canDelete');
+    }
+
+    match /transactions/{transactionId} {
+      allow read: if isAuthenticated();
+      allow create: if (hasPermission('accounting', 'canAdd') || hasPermission('cashier', 'canAdd')) && isValidTransaction(request.resource.data);
+      allow update: if hasPermission('accounting', 'canEdit') || hasPermission('cashier', 'canEdit');
+      allow delete: if hasPermission('accounting', 'canDelete') || hasPermission('cashier', 'canDelete');
+    }
+
+    function isValidCategory(data) {
+      return hasRequiredFields(['name']) &&
+             data.name is string && data.name.size() > 0 &&
+             (!('parentId' in data) || data.parentId is string);
+    }
+
+    match /categories/{categoryId} {
+      allow read: if isAuthenticated();
+      allow create: if hasPermission('categories', 'canAdd') && isValidCategory(request.resource.data);
+      allow update: if hasPermission('categories', 'canEdit') && isValidCategory(request.resource.data);
+      allow delete: if hasPermission('categories', 'canDelete');
+    }
+
+    match /transfers/{transferId} {
+      allow read: if isAuthenticated();
+      allow create: if hasPermission('transfers', 'canAdd') && isValidTransfer(request.resource.data);
+      allow update: if hasPermission('transfers', 'canEdit');
+      allow delete: if hasPermission('transfers', 'canDelete');
+    }
+
+    match /returns/{returnId} {
+      allow read: if isAuthenticated();
+      allow create: if hasPermission('returns', 'canAdd') && isValidReturn(request.resource.data);
+      allow update: if hasPermission('returns', 'canEdit');
+      allow delete: if hasPermission('returns', 'canDelete');
+    }
+
+    match /settings/{settingId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Default deny
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

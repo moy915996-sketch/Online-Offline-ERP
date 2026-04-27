@@ -1,0 +1,199 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Inventory item",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Product name" },
+        "sku": { "type": "string", "description": "Stock Keeping Unit" },
+        "category": { "type": "string" },
+        "price": { "type": "number", "description": "Selling price" },
+        "cost": { "type": "number", "description": "Purchase cost" },
+        "stock": { "type": "number", "description": "Current stock level" },
+        "stockLeft": { "type": "number", "description": "Left shoe stock" },
+        "stockRight": { "type": "number", "description": "Right shoe stock" },
+        "unit": { "type": "string", "description": "Unit of measure (e.g., kg, pcs)" },
+        "pieceType": { "type": "string", "enum": ["single", "pair"] },
+        "warehouseId": { "type": "string", "description": "ID of the warehouse where this product is stored" },
+        "subCategory": { "type": "string" },
+        "brand": { "type": "string" },
+        "color": { "type": "string" },
+        "size": { "type": "string" },
+        "imageUrl": { "type": "string" }
+      },
+      "required": ["name", "sku", "price", "cost", "stock", "stockLeft", "stockRight", "warehouseId", "pieceType"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Product category",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "parentId": { "type": "string", "description": "ID of the parent category" }
+      },
+      "required": ["name"]
+    },
+    "Warehouse": {
+      "title": "Warehouse",
+      "description": "Warehouse location",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "location": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "Supplier": {
+      "title": "Supplier",
+      "description": "Supplier information",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "contact": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Customer information",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "Purchase": {
+      "title": "Purchase",
+      "description": "Purchase transaction",
+      "type": "object",
+      "properties": {
+        "supplierId": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "productId": { "type": "string" },
+              "quantity": { "type": "number" },
+              "cost": { "type": "number" },
+              "unitType": { "type": "string", "enum": ["piece", "carton"] }
+            }
+          }
+        },
+        "total": { "type": "number" }
+      },
+      "required": ["supplierId", "date", "items", "total"]
+    },
+    "Sale": {
+      "title": "Sale",
+      "description": "Sales transaction",
+      "type": "object",
+      "properties": {
+        "customerId": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "productId": { "type": "string" },
+              "quantity": { "type": "number" },
+              "price": { "type": "number" },
+              "unitType": { "type": "string", "enum": ["piece", "carton"] }
+            }
+          }
+        },
+        "total": { "type": "number" }
+      },
+      "required": ["customerId", "date", "items", "total"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Accounting journal entry",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date-time" },
+        "description": { "type": "string" },
+        "type": { "type": "string", "enum": ["income", "expense"] },
+        "amount": { "type": "number" },
+        "category": { "type": "string" }
+      },
+      "required": ["date", "description", "type", "amount"]
+    },
+    "WarehouseTransfer": {
+      "title": "WarehouseTransfer",
+      "description": "Transfer of products between warehouses",
+      "type": "object",
+      "properties": {
+        "fromWarehouseId": { "type": "string" },
+        "toWarehouseId": { "type": "string" },
+        "productId": { "type": "string" },
+        "quantityLeft": { "type": "number" },
+        "quantityRight": { "type": "number" },
+        "date": { "type": "string", "format": "date-time" },
+        "note": { "type": "string" }
+      },
+      "required": ["fromWarehouseId", "toWarehouseId", "productId", "quantityLeft", "quantityRight", "date"]
+    },
+    "Return": {
+      "title": "Return",
+      "description": "Product return record",
+      "type": "object",
+      "properties": {
+        "saleId": { "type": "string" },
+        "customerId": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "productId": { "type": "string" },
+              "quantityLeft": { "type": "number" },
+              "quantityRight": { "type": "number" },
+              "reason": { "type": "string" }
+            }
+          }
+        },
+        "totalRefund": { "type": "number" },
+        "status": { "type": "string", "enum": ["completed", "pending"] }
+      },
+      "required": ["saleId", "date", "items", "totalRefund", "status"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile and permissions",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["admin", "user"] },
+        "displayName": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "allowedScreens": { "type": "array", "items": { "type": "string" } },
+        "permissions": { "type": "object" },
+        "screenCredentials": { "type": "object" }
+      },
+      "required": ["email", "role", "isActive"]
+    }
+  },
+  "firestore": {
+    "/products": { "schema": "Product", "description": "Inventory products" },
+    "/categories": { "schema": "Category", "description": "Product categories" },
+    "/warehouses": { "schema": "Warehouse", "description": "Warehouses list" },
+    "/suppliers": { "schema": "Supplier", "description": "Suppliers list" },
+    "/customers": { "schema": "Customer", "description": "Customers list" },
+    "/purchases": { "schema": "Purchase", "description": "Purchase records" },
+    "/sales": { "schema": "Sale", "description": "Sales records" },
+    "/transactions": { "schema": "Transaction", "description": "Accounting transactions" },
+    "/transfers": { "schema": "WarehouseTransfer", "description": "Warehouse transfer records" },
+    "/returns": { "schema": "Return", "description": "Product return records" },
+    "/users": { "schema": "UserProfile", "description": "User profiles and permissions" }
+  }
+}

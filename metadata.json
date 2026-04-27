@@ -1,0 +1,7 @@
+{
+  "name": "online\u0026ofline:  ERP ",
+  "description": "نظام تخطيط موارد المؤسسات يغطي المشتريات، المخازن، المبيعات، والحسابات مع دعم كامل للغة العربية.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
