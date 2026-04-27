@@ -20,22 +20,22 @@ const SyncStatusIndicator: React.FC = () => {
       setPendingCount(count);
     };
 
-    const handleSync = () => {
-      setIsSyncing(true);
-      setTimeout(() => {
-        setIsSyncing(false);
-        checkPending();
-      }, 2000);
+    const handleSyncStarted = () => setIsSyncing(true);
+    const handleSyncCompleted = () => {
+      setIsSyncing(false);
+      checkPending();
     };
 
-    window.addEventListener('sync-completed', handleSync);
+    window.addEventListener('sync-started', handleSyncStarted);
+    window.addEventListener('sync-completed', handleSyncCompleted);
     const interval = setInterval(checkPending, 5000);
     checkPending();
 
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
-      window.removeEventListener('sync-completed', handleSync);
+      window.removeEventListener('sync-started', handleSyncStarted);
+      window.removeEventListener('sync-completed', handleSyncCompleted);
       clearInterval(interval);
     };
   }, []);

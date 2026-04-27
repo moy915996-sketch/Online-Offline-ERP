@@ -11,6 +11,7 @@ import {
 } from 'firebase/firestore';
 import { db as firestoreDb, OperationType, handleFirestoreError } from '../firebase';
 import { db as localDb, type SyncStatus, type SyncOperation, type OfflineRecord } from './db';
+import { syncEngine } from './syncEngine';
 
 // Helper to generate IDs when offline
 export const generateId = () => {
@@ -77,6 +78,11 @@ export async function offlineCreate(collectionName: string, data: any) {
   }
 
   await getTable(collectionName).put(record);
+  
+  if (navigator.onLine) {
+    syncEngine.syncPendingOperations();
+  }
+  
   return id;
 }
 
@@ -118,6 +124,10 @@ export async function offlineUpdate(collectionName: string, id: string, data: an
   }
 
   await getTable(collectionName).put(record);
+  
+  if (navigator.onLine) {
+    syncEngine.syncPendingOperations();
+  }
 }
 
 export async function offlineDelete(collectionName: string, id: string) {
@@ -134,6 +144,10 @@ export async function offlineDelete(collectionName: string, id: string) {
     }
   } else {
     await handleOfflineDelete(collectionName, id);
+  }
+  
+  if (navigator.onLine) {
+    syncEngine.syncPendingOperations();
   }
 }
 

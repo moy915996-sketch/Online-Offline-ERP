@@ -8,7 +8,8 @@ import {
   type DocumentData,
   Timestamp
 } from 'firebase/firestore';
-import { db as firestoreDb } from '../firebase';
+import { onAuthStateChanged, type User } from 'firebase/auth';
+import { db as firestoreDb, auth } from '../firebase';
 import { db as localDb, type OfflineRecord } from './db';
 import { getTable } from './offlineRepository';
 
@@ -20,6 +21,7 @@ export function useOfflineCollection<T = any>(
   const [items, setItems] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [user, setUser] = useState<User | null>(auth.currentUser);
   const [syncStatus, setSyncStatus] = useState<'synced' | 'pending' | 'failed' | 'conflict'>('synced');
   const [pendingCount, setPendingCount] = useState(0);
 
@@ -35,8 +37,8 @@ export function useOfflineCollection<T = any>(
     // Apply sorting if needed
     if (orderByField) {
       data.sort((a: any, b: any) => {
-        const valA = a[orderByField];
-        const valB = b[orderByField];
+        const valA = (a as any)[orderByField];
+        const valB = (b as any)[orderByField];
         if (orderDirection === 'asc') {
           return valA > valB ? 1 : -1;
         } else {
@@ -53,6 +55,13 @@ export function useOfflineCollection<T = any>(
   }, [collectionName, orderByField, orderDirection]);
 
   useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+    });
+    return () => unsubscribeAuth();
+  }, []);
+
+  useEffect(() => {
     // Initial load from IndexedDB
     refresh().then(() => setLoading(false));
 
@@ -66,14 +75,14 @@ export function useOfflineCollection<T = any>(
     const handleSync = () => refresh();
     window.addEventListener('sync-completed', handleSync);
 
-    let unsubscribe: () => void = () => {};
+    let unsubscribeSnapshot: (() => void) | null = null;
 
-    if (isOnline) {
+    if (isOnline && user) {
       const q = orderByField 
         ? query(collection(firestoreDb, collectionName), orderBy(orderByField, orderDirection))
         : collection(firestoreDb, collectionName);
 
-      unsubscribe = onSnapshot(q, async (snapshot) => {
+      unsubscribeSnapshot = onSnapshot(q, async (snapshot) => {
         const table = getTable(collectionName);
         
         for (const change of snapshot.docChanges()) {
@@ -83,13 +92,9 @@ export function useOfflineCollection<T = any>(
           if (change.type === 'removed') {
             await table.delete(id);
           } else {
-            // Check for conflict here if we wanted to be rigorous
-            // For now, update local storage with server data
             const existing = await table.get(id);
             
-            // If we have a pending local change, we might want to skip or handle conflict
             if (existing && !existing.synced) {
-               // Simple logic: if server data is newer than local updatedAt, server wins
                const serverUpdate = (docData.updatedAt as Timestamp)?.toMillis?.() || 0;
                if (serverUpdate > existing.updatedAt) {
                  await table.put({
@@ -100,13 +105,10 @@ export function useOfflineCollection<T = any>(
                    updatedAt: serverUpdate,
                    synced: true,
                    syncStatus: 'synced',
-                   version: existing.version + 1
+                   version: (existing.version || 0) + 1
                  });
-               } else {
-                 // Local is newer or no timestamp, keep local as pending
                }
             } else {
-              // Regular update from server
               await table.put({
                 id,
                 data: { ...docData, id },
@@ -122,7 +124,10 @@ export function useOfflineCollection<T = any>(
         }
         refresh();
       }, (error) => {
-        console.error(`onSnapshot error for ${collectionName}:`, error);
+        // Only log if it's not a permission error or if we are supposed to have permission
+        if (error.code !== 'permission-denied' || auth.currentUser) {
+           console.error(`onSnapshot error for ${collectionName}:`, error);
+        }
       });
     }
 
@@ -130,9 +135,9 @@ export function useOfflineCollection<T = any>(
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('sync-completed', handleSync);
-      unsubscribe();
+      if (unsubscribeSnapshot) unsubscribeSnapshot();
     };
-  }, [collectionName, isOnline, orderByField, orderDirection, refresh]);
+  }, [collectionName, isOnline, user, orderByField, orderDirection, refresh]);
 
   return { items, loading, isOnline, syncStatus, pendingCount, refresh };
 }

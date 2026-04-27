@@ -1787,12 +1787,16 @@ const PurchasesModule = ({ purchases, suppliers, products, warehouses, canDo, sh
   const filteredPurchases = useMemo(() => {
     return purchases.filter(p => {
       const supplier = suppliers.find(s => s.id === p.supplierId);
-      const matchesSearch = supplier?.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                           supplier?.companyName?.toLowerCase().includes(searchQuery.toLowerCase());
+      const supplierName = supplier?.name || t('unknownSupplier');
+      const companyName = supplier?.companyName || '';
+      
+      const matchesSearch = !searchQuery || 
+                           supplierName.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                           companyName.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesDate = !dateFilter || p.date.startsWith(dateFilter);
       return matchesSearch && matchesDate;
     });
-  }, [purchases, suppliers, searchQuery, dateFilter]);
+  }, [purchases, suppliers, searchQuery, dateFilter, t]);
   const [totalDiscount, setTotalDiscount] = useState(0);
   const [discountType, setDiscountType] = useState<'percentage' | 'fixed'>('percentage');
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
@@ -2394,12 +2398,16 @@ const SalesModule = ({ sales, customers, products, settings, canDo, showToast, c
   const filteredSales = useMemo(() => {
     return sales.filter(s => {
       const customer = customers.find(c => c.id === s.customerId);
-      const matchesSearch = customer?.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                           customer?.phone?.includes(searchQuery);
+      const customerName = customer?.name || (s.customerId === 'walk-in' ? t('walkIn') : t('unknownCustomer'));
+      const customerPhone = customer?.phone || '';
+      
+      const matchesSearch = !searchQuery || 
+                           customerName.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                           customerPhone.includes(searchQuery);
       const matchesDate = !dateFilter || s.date.startsWith(dateFilter);
       return matchesSearch && matchesDate;
     });
-  }, [sales, customers, searchQuery, dateFilter]);
+  }, [sales, customers, searchQuery, dateFilter, t]);
 
   const addItem = () => {
     setItems([...items, { productId: '', quantity: 1, price: 0, unitType: 'piece' }]);
@@ -2557,7 +2565,7 @@ const SalesModule = ({ sales, customers, products, settings, canDo, showToast, c
                     {format(new Date(sale.date), 'yyyy/MM/dd HH:mm', { locale: language === 'ar' ? undefined : enUS })}
                   </td>
                   <td className="px-6 py-4 text-sm font-medium text-slate-900 dark:text-white">
-                    {customers.find(c => c.id === sale.customerId)?.name || t('unknownCustomer')}
+                    {customers.find(c => c.id === sale.customerId)?.name || (sale.customerId === 'walk-in' ? t('walkIn') : t('unknownCustomer'))}
                   </td>
                   <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-400">{sale.items.length}</td>
                   <td className="px-6 py-4 text-sm font-bold text-slate-900 dark:text-white">{sale.total.toLocaleString()} {t('egp')}</td>
@@ -3743,21 +3751,23 @@ const ReturnsModule = ({ returns, sales, purchases, products, customers, supplie
 
   const filteredInvoices = useMemo(() => {
     if (returnType === 'sale') {
-      if (!searchQuery) return sales;
       return sales.filter(s => {
         const customer = customers.find(c => c.id === s.customerId);
-        return s.invoiceNumber.toLowerCase().includes(searchQuery.toLowerCase()) || 
-               customer?.name.toLowerCase().includes(searchQuery.toLowerCase());
+        const customerName = customer?.name || (s.customerId === 'walk-in' ? t('walkIn') : t('unknownCustomer'));
+        return !searchQuery || 
+               s.invoiceNumber.toLowerCase().includes(searchQuery.toLowerCase()) || 
+               customerName.toLowerCase().includes(searchQuery.toLowerCase());
       });
     } else {
-      if (!searchQuery) return purchases;
       return purchases.filter(p => {
         const supplier = suppliers.find(s => s.id === p.supplierId);
-        return p.id?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-               supplier?.name.toLowerCase().includes(searchQuery.toLowerCase());
+        const supplierName = supplier?.name || t('unknownSupplier');
+        return !searchQuery || 
+               p.id?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+               supplierName.toLowerCase().includes(searchQuery.toLowerCase());
       });
     }
-  }, [returnType, sales, purchases, customers, suppliers, searchQuery]);
+  }, [returnType, sales, purchases, customers, suppliers, searchQuery, t]);
 
   const selectedInvoice = useMemo(() => {
     if (returnType === 'sale') return sales.find(s => s.id === selectedInvoiceId);
@@ -4678,7 +4688,7 @@ const InvoicesModule = ({
         invoiceNumber: s.invoiceNumber,
         type: 'sale',
         date: s.date,
-        partyName: customer?.name || t('unknownCustomer'),
+        partyName: customer?.name || (s.customerId === 'walk-in' ? t('walkIn') : t('unknownCustomer')),
         originalAmount: s.total,
         returnsAmount: returnsTotal,
         netAmount: s.total - returnsTotal,

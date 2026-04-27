@@ -12,12 +12,20 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
     function isValidId(id) {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
     function incoming() {
       return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
     }
 
     function isAdmin() {
@@ -37,39 +45,57 @@ service cloud.firestore {
       );
     }
 
+    // --- Collection Schemas ---
+    
+    function isValidProduct(data) {
+      return data.keys().hasAll(['name', 'sku', 'price', 'cost', 'stock', 'stockLeft', 'stockRight', 'unit', 'warehouseId']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 500 &&
+             data.sku is string && data.sku.size() > 0 && data.sku.size() < 100 &&
+             data.price is number && data.cost is number &&
+             data.stock is number && data.stockLeft is number && data.stockRight is number &&
+             data.unit is string && data.warehouseId is string;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'role', 'isActive']) &&
+             data.email is string &&
+             data.role in ['admin', 'user'] &&
+             data.isActive is bool;
+    }
+
     // --- Rules ---
 
     match /users/{userId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && (isAdmin() || request.auth.uid == userId);
-      allow update: if isSignedIn() && (isAdmin() || request.auth.uid == userId);
+      allow create: if isSignedIn() && (isAdmin() || request.auth.uid == userId) && isValidUser(incoming());
+      allow update: if isSignedIn() && (isAdmin() || request.auth.uid == userId) && isValidUser(incoming());
       allow delete: if isAdmin();
     }
 
     match /products/{productId} {
       allow read: if isSignedIn();
-      allow create: if isActive();
+      allow create: if isActive() && isValidProduct(incoming());
       allow update: if isActive();
       allow delete: if isAdmin();
     }
 
     match /warehouses/{warehouseId} {
       allow read: if isSignedIn();
-      allow create: if isActive();
+      allow create: if isActive() && incoming().keys().hasAll(['name']);
       allow update: if isActive();
       allow delete: if isAdmin();
     }
 
     match /suppliers/{supplierId} {
       allow read: if isSignedIn();
-      allow create: if isActive();
+      allow create: if isActive() && incoming().keys().hasAll(['name']);
       allow update: if isActive();
       allow delete: if isAdmin();
     }
 
     match /customers/{customerId} {
       allow read: if isSignedIn();
-      allow create: if isActive();
+      allow create: if isActive() && incoming().keys().hasAll(['name']);
       allow update: if isActive();
       allow delete: if isAdmin();
     }

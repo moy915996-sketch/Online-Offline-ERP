@@ -6,7 +6,8 @@ import {
   deleteDoc, 
   serverTimestamp 
 } from 'firebase/firestore';
-import { db as firestoreDb } from '../firebase';
+import { onAuthStateChanged } from 'firebase/auth';
+import { db as firestoreDb, auth } from '../firebase';
 import { db as localDb, type SyncQueueItem, type OfflineRecord } from './db';
 import { getTable } from './offlineRepository';
 
@@ -20,16 +21,24 @@ class SyncEngine {
         this.syncPendingOperations();
       });
       
+      onAuthStateChanged(auth, (user) => {
+        if (user && navigator.onLine) {
+          console.log('User signed in. Starting sync...');
+          this.syncPendingOperations();
+        }
+      });
+
       // Initial check
-      if (navigator.onLine) {
+      if (navigator.onLine && auth.currentUser) {
         this.syncPendingOperations();
       }
     }
   }
 
   async syncPendingOperations() {
-    if (this.isSyncing) return;
+    if (this.isSyncing || !auth.currentUser || !navigator.onLine) return;
     this.isSyncing = true;
+    window.dispatchEvent(new CustomEvent('sync-started'));
 
     try {
       const pendingItems = await localDb.syncQueue
@@ -59,8 +68,15 @@ class SyncEngine {
           }
         } catch (error: any) {
           console.error(`Failed to sync item ${item.id}:`, error);
+          
+          const isFatal = 
+            error.code === 'permission-denied' || 
+            error.code === 'not-found' ||
+            error.message?.includes('not found') ||
+            error.message?.includes('permission');
+
           const retryCount = (item.retryCount || 0) + 1;
-          const status = retryCount > 5 ? 'failed' : 'pending';
+          const status = (retryCount > 5 || isFatal) ? 'failed' : 'pending';
           
           await localDb.syncQueue.update(item.id!, { 
             status, 
@@ -75,13 +91,14 @@ class SyncEngine {
             lastError: error.message 
           });
 
-          // If it failed, stop processing this queue for now to prevent out-of-order issues
+          // If it's still pending, stop processing to prevent out-of-order issues.
+          // If it's failed, we can try next items if they are independent.
+          // For safety, we still break for now, but fatal errors won't block the queue next time.
           if (status === 'pending') break; 
         }
       }
     } finally {
       this.isSyncing = false;
-      // Trigger a refresh event if needed
       window.dispatchEvent(new CustomEvent('sync-completed'));
     }
   }
