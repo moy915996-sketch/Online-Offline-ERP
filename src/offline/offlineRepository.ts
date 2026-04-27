@@ -25,15 +25,30 @@ export const getTable = (collectionName: string) => {
   return table;
 };
 
-// Helper to handle increment in local data
-const processLocalData = (data: any, existingData: any = {}) => {
+// Helper to handle increment and other FieldValues in local data
+const processLocalData = (data: any, existingData: any = {}): any => {
+  if (!data || typeof data !== 'object') return data;
+  if (Array.isArray(data)) return data.map(item => processLocalData(item));
+
   const processed = { ...data };
   for (const key in processed) {
     const value = processed[key];
-    // Check if it's a Firestore increment (it's an object with a specific structure)
-    if (value && typeof value === 'object' && value._methodName === 'FieldValue.increment') {
-      const amount = value._operand || 0;
-      processed[key] = (existingData[key] || 0) + amount;
+    
+    // Check if it's a Firestore FieldValue or complex object
+    if (value && typeof value === 'object') {
+      // Handle increment
+      if (value._methodName?.includes('increment')) {
+        const amount = value._operand || value.bc || 0;
+        processed[key] = (existingData[key] || 0) + (typeof amount === 'number' ? amount : 0);
+      } 
+      // Handle serverTimestamp or others
+      else if (value._methodName) {
+        processed[key] = existingData[key] || Date.now();
+      }
+      // Handle nested objects
+      else {
+        processed[key] = processLocalData(value, existingData[key] || {});
+      }
     }
   }
   return processed;
@@ -83,6 +98,10 @@ export async function offlineCreate(collectionName: string, data: any) {
 
   await getTable(collectionName).put(record);
   
+  window.dispatchEvent(new CustomEvent('local-data-changed', { 
+    detail: { collectionName } 
+  }));
+  
   if (navigator.onLine) {
     syncEngine.syncPendingOperations();
   }
@@ -118,10 +137,10 @@ export async function offlineUpdate(collectionName: string, id: string, data: an
     try {
       const docRef = doc(firestoreDb, collectionName, id);
       await Promise.race([
-        updateDoc(docRef, {
+        setDoc(docRef, {
           ...data,
           updatedAt: serverTimestamp(),
-        }),
+        }, { merge: true }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
       ]);
       record.synced = true;
@@ -135,6 +154,10 @@ export async function offlineUpdate(collectionName: string, id: string, data: an
   }
 
   await getTable(collectionName).put(record);
+  
+  window.dispatchEvent(new CustomEvent('local-data-changed', { 
+    detail: { collectionName } 
+  }));
   
   if (navigator.onLine) {
     syncEngine.syncPendingOperations();
@@ -152,6 +175,9 @@ export async function offlineDelete(collectionName: string, id: string) {
         new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
       ]);
       await getTable(collectionName).delete(id);
+      window.dispatchEvent(new CustomEvent('local-data-changed', { 
+        detail: { collectionName } 
+      }));
     } catch (error) {
       console.warn('Failed to delete from Firestore while online, queuing for offline sync', error);
       await handleOfflineDelete(collectionName, id);
@@ -177,6 +203,9 @@ async function handleOfflineDelete(collectionName: string, id: string) {
     };
     await getTable(collectionName).put(record);
     await addToQueue(collectionName, id, 'delete', null);
+    window.dispatchEvent(new CustomEvent('local-data-changed', { 
+      detail: { collectionName } 
+    }));
   }
 }
 

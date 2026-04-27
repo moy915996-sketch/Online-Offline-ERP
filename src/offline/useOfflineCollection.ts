@@ -13,6 +13,41 @@ import { db as firestoreDb, auth } from '../firebase';
 import { db as localDb, type OfflineRecord } from './db';
 import { getTable } from './offlineRepository';
 
+// Helper to remove Firestore FieldValues from local data
+const sanitizeData = (data: any): any => {
+  if (!data || typeof data !== 'object') return data;
+  if (Array.isArray(data)) return data.map(sanitizeData);
+  
+  const sanitized = { ...data };
+  for (const key in sanitized) {
+    const value = sanitized[key];
+    if (value && typeof value === 'object') {
+      // Check for FieldValue.increment
+      if (value._methodName?.includes('increment')) {
+        sanitized[key] = value._operand || value.bc || 0;
+      }
+      // Check for serverTimestamp (Timestamp object)
+      else if (value.seconds !== undefined && value.nanoseconds !== undefined) {
+        // If it has seconds/nanoseconds, it's a Firestore Timestamp or Similar
+        // We convert to milliseconds to be safe for React rendering
+        if (typeof value.toMillis === 'function') {
+          sanitized[key] = value.toMillis();
+        } else {
+          sanitized[key] = (value.seconds * 1000) + Math.floor(value.nanoseconds / 1000000);
+        }
+      }
+      // Handle other objects that might have _methodName
+      else if (value._methodName) {
+        sanitized[key] = null;
+      }
+      else {
+        sanitized[key] = sanitizeData(value);
+      }
+    }
+  }
+  return sanitized;
+};
+
 export function useOfflineCollection<T = any>(
   collectionName: string, 
   orderByField?: string, 
@@ -32,7 +67,7 @@ export function useOfflineCollection<T = any>(
     // Convert OfflineRecord back to T
     const data = localRecords
       .filter(r => r.operation !== 'delete')
-      .map(r => r.data as T);
+      .map(r => sanitizeData(r.data) as T);
     
     // Apply sorting if needed
     if (orderByField) {
@@ -62,18 +97,33 @@ export function useOfflineCollection<T = any>(
   }, []);
 
   useEffect(() => {
+    let mounted = true;
+
     // Initial load from IndexedDB
-    refresh().then(() => setLoading(false));
+    refresh()
+      .catch(err => console.error(`Error refreshing ${collectionName}:`, err))
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
 
     // Handle online/offline status
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
+    const handleOnline = () => {
+      if (mounted) setIsOnline(true);
+    };
+    const handleOffline = () => {
+      if (mounted) setIsOnline(false);
+    };
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
-    // Handle sync updates
-    const handleSync = () => refresh();
-    window.addEventListener('sync-completed', handleSync);
+    // Handle sync and local updates
+    const handleUpdate = (e?: any) => {
+      if (e?.detail?.collectionName === collectionName || !e?.detail?.collectionName) {
+        refresh();
+      }
+    };
+    window.addEventListener('sync-completed', handleUpdate);
+    window.addEventListener('local-data-changed', handleUpdate);
 
     let unsubscribeSnapshot: (() => void) | null = null;
 
@@ -99,7 +149,7 @@ export function useOfflineCollection<T = any>(
                if (serverUpdate > existing.updatedAt) {
                  await table.put({
                    id,
-                   data: { ...docData, id },
+                   data: sanitizeData({ ...docData, id }),
                    collectionName,
                    createdAt: (docData.createdAt as Timestamp)?.toMillis?.() || Date.now(),
                    updatedAt: serverUpdate,
@@ -111,7 +161,7 @@ export function useOfflineCollection<T = any>(
             } else {
               await table.put({
                 id,
-                data: { ...docData, id },
+                data: sanitizeData({ ...docData, id }),
                 collectionName,
                 createdAt: (docData.createdAt as Timestamp)?.toMillis?.() || Date.now(),
                 updatedAt: (docData.updatedAt as Timestamp)?.toMillis?.() || Date.now(),
@@ -132,9 +182,11 @@ export function useOfflineCollection<T = any>(
     }
 
     return () => {
+      mounted = false;
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
-      window.removeEventListener('sync-completed', handleSync);
+      window.removeEventListener('sync-completed', handleUpdate);
+      window.removeEventListener('local-data-changed', handleUpdate);
       if (unsubscribeSnapshot) unsubscribeSnapshot();
     };
   }, [collectionName, isOnline, user, orderByField, orderDirection, refresh]);

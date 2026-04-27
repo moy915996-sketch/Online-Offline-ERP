@@ -305,20 +305,22 @@ const Dashboard = ({
   }, [returns, dateRange]);
 
   const totalSales = useMemo(() => {
-    const salesAmount = filteredSales.reduce((acc, s) => acc + s.total, 0);
-    const returnsAmount = filteredReturns.filter(r => r.type === 'sale').reduce((acc, r) => acc + r.totalRefund, 0);
+    const salesAmount = filteredSales.reduce((acc, s) => acc + Number(s.total || 0), 0);
+    const returnsAmount = filteredReturns.filter(r => r.type === 'sale').reduce((acc, r) => acc + Number(r.totalRefund || 0), 0);
     return salesAmount - returnsAmount;
   }, [filteredSales, filteredReturns]);
 
   const totalPurchases = useMemo(() => {
-    const purchaseAmount = filteredPurchases.reduce((acc, p) => acc + p.total, 0);
-    const returnsAmount = filteredReturns.filter(r => r.type === 'purchase').reduce((acc, r) => acc + r.totalRefund, 0);
+    const purchaseAmount = filteredPurchases.reduce((acc, p) => acc + Number(p.total || 0), 0);
+    const returnsAmount = filteredReturns.filter(r => r.type === 'purchase').reduce((acc, r) => acc + Number(r.totalRefund || 0), 0);
     return purchaseAmount - returnsAmount;
   }, [filteredPurchases, filteredReturns]);
-  const totalStockValue = useMemo(() => products.reduce((acc, p) => acc + (p.stock * p.cost), 0), [products]);
+
+  const totalStockValue = useMemo(() => products.reduce((acc, p) => acc + (Number(p.stock || 0) * Number(p.cost || 0)), 0), [products]);
+
   const netProfit = useMemo(() => {
-    const income = filteredTransactions.filter(t => t.type === 'income').reduce((acc, t) => acc + t.amount, 0);
-    const expense = filteredTransactions.filter(t => t.type === 'expense').reduce((acc, t) => acc + t.amount, 0);
+    const income = filteredTransactions.filter(t => t.type === 'income').reduce((acc, t) => acc + Number(t.amount || 0), 0);
+    const expense = filteredTransactions.filter(t => t.type === 'expense').reduce((acc, t) => acc + Number(t.amount || 0), 0);
     return income - expense;
   }, [filteredTransactions]);
 
@@ -5265,7 +5267,7 @@ const SettingsModule = ({ settings, users, currentUserProfile, showToast, confir
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {users.map((u) => (
-                    <tr key={u.uid} className="hover:bg-slate-50 transition-colors dark:hover:bg-slate-900/50">
+                    <tr key={(u as any).id || u.uid || u.email} className="hover:bg-slate-50 transition-colors dark:hover:bg-slate-900/50">
                       <td className="px-6 py-4 text-sm font-medium text-slate-900 dark:text-white">{u.displayName || t('notSet')}</td>
                       <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-400">{u.email}</td>
                       <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-400">
@@ -5553,96 +5555,104 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // Group loading states
+  const isAllDataLoaded = useMemo(() => {
+    return isUsersLoaded;
+  }, [isUsersLoaded]);
+
   useEffect(() => {
     if (!user) return;
 
     const ensureUserProfile = async () => {
-      // 1. Try to find profile in local database first for speed and offline support
-      const localProfile = await getOfflineRecord('users', user.uid);
-      if (localProfile) {
-        setIsProfileReady(true);
-        setIsUsersLoaded(true);
-        
-        // If online, we can tentatively update from Firestore in background
+      try {
+        // 1. Try to find profile in local database first for speed and offline support
+        const localProfile = await getOfflineRecord('users', user.uid);
+        if (localProfile) {
+          setIsProfileReady(true);
+          setIsUsersLoaded(true);
+          
+          // If online, we can tentatively update from Firestore in background
+          if (navigator.onLine) {
+            try {
+              const userRef = doc(db, 'users', user.uid);
+              const docSnap = await Promise.race([
+                getDoc(userRef),
+                new Promise<any>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
+              ]);
+              if (docSnap.exists()) {
+                await offlineUpdate('users', user.uid, {
+                  email: user.email,
+                  displayName: user.displayName || docSnap.data().displayName || ''
+                });
+              }
+            } catch (e) {
+              console.warn('Background profile sync failed', e);
+            }
+          }
+          return;
+        }
+
+        // 2. If not found locally, we must check Firestore
         if (navigator.onLine) {
+          const userRef = doc(db, 'users', user.uid);
           try {
-            const userRef = doc(db, 'users', user.uid);
             const docSnap = await Promise.race([
               getDoc(userRef),
-              new Promise<any>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
+              new Promise<any>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
             ]);
-            if (docSnap.exists()) {
+            
+            if (!docSnap.exists()) {
+              // Check if there's a profile with this email but different ID (e.g. email or random ID)
+              const q = query(collection(db, 'users'), where('email', '==', user.email));
+              const querySnap = await Promise.race([
+                getDocs(q),
+                new Promise<any>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+              ]);
+              
+              if (!querySnap.empty) {
+                const existingDoc = querySnap.docs[0];
+                const data = existingDoc.data();
+                await offlineUpdate('users', user.uid, {
+                  role: 'user',
+                  isActive: false,
+                  allowedScreens: [],
+                  permissions: {},
+                  ...data,
+                  uid: user.uid,
+                  email: user.email
+                });
+                if (existingDoc.id !== user.uid) {
+                  await offlineDelete('users', existingDoc.id);
+                }
+              } else if (user.email === 'yahia167199@gmail.com' || user.email === 'moy915996@gmail.com') {
+                await offlineUpdate('users', user.uid, {
+                  uid: user.uid,
+                  email: user.email,
+                  displayName: user.displayName || '',
+                  role: 'admin',
+                  isActive: true,
+                  allowedScreens: [],
+                  permissions: {}
+                });
+              }
+            } else {
               await offlineUpdate('users', user.uid, {
                 email: user.email,
                 displayName: user.displayName || docSnap.data().displayName || ''
               });
             }
-          } catch (e) {
-            console.warn('Background profile sync failed', e);
+            setIsProfileReady(true);
+          } catch (err) {
+            console.error('Initial profile fetch failed', err);
+          } finally {
+            setIsUsersLoaded(true);
           }
-        }
-        return;
-      }
-
-      // 2. If not found locally, we must check Firestore
-      if (navigator.onLine) {
-        const userRef = doc(db, 'users', user.uid);
-        try {
-          const docSnap = await Promise.race([
-            getDoc(userRef),
-            new Promise<any>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
-          ]);
-          
-          if (!docSnap.exists()) {
-            // Check if there's a profile with this email but different ID (e.g. email or random ID)
-            const q = query(collection(db, 'users'), where('email', '==', user.email));
-            const querySnap = await Promise.race([
-              getDocs(q),
-              new Promise<any>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
-            ]);
-            
-            if (!querySnap.empty) {
-              const existingDoc = querySnap.docs[0];
-              const data = existingDoc.data();
-              await offlineUpdate('users', user.uid, {
-                role: 'user',
-                isActive: false,
-                allowedScreens: [],
-                permissions: {},
-                ...data,
-                uid: user.uid,
-                email: user.email
-              });
-              if (existingDoc.id !== user.uid) {
-                await offlineDelete('users', existingDoc.id);
-              }
-            } else if (user.email === 'yahia167199@gmail.com' || user.email === 'moy915996@gmail.com') {
-              await offlineUpdate('users', user.uid, {
-                uid: user.uid,
-                email: user.email,
-                displayName: user.displayName || '',
-                role: 'admin',
-                isActive: true,
-                allowedScreens: [],
-                permissions: {}
-              });
-            }
-          } else {
-            await offlineUpdate('users', user.uid, {
-              email: user.email,
-              displayName: user.displayName || docSnap.data().displayName || ''
-            });
-          }
-          setIsProfileReady(true);
-          setIsUsersLoaded(true);
-        } catch (err) {
-          console.error('Initial profile fetch failed', err);
-          // If it fails (e.g. timeout), let's still set loaded so they aren't stuck
-          // but we won't have a profile yet which will show "Unauthorized"
+        } else {
+          // Offline and no local profile - user is stuck until they go online at least once
           setIsUsersLoaded(true);
         }
-      } else {
-        // Offline and no local profile - user is stuck until they go online at least once
+      } catch (err) {
+        console.error('ensureUserProfile fatal error:', err);
         setIsUsersLoaded(true);
       }
     };
@@ -5650,9 +5660,16 @@ export default function App() {
     ensureUserProfile();
   }, [user]);
 
+  // Loading safety fallback
   useEffect(() => {
-    // Redundant effect removed, logic moved to ensureUserProfile
-  }, [user, isUsersLoaded, users.length]);
+    const timer = setTimeout(() => {
+      if (!isUsersLoaded && user) {
+        console.warn('Safety fallback for isUsersLoaded triggered');
+        setIsUsersLoaded(true);
+      }
+    }, 12000);
+    return () => clearTimeout(timer);
+  }, [isUsersLoaded, user]);
 
   const handleLogin = async () => {
     const provider = new GoogleAuthProvider();
@@ -5752,7 +5769,7 @@ export default function App() {
     );
   }
 
-  if (!isUsersLoaded) {
+  if (!isAllDataLoaded) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex items-center justify-center p-4" dir={dir}>
         <div className="text-slate-500 dark:text-slate-400">{t('loadingSystemData')}</div>

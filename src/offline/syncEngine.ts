@@ -115,10 +115,10 @@ class SyncEngine {
         });
         break;
       case 'update':
-        await updateDoc(docRef, {
+        await setDoc(docRef, {
           ...item.data,
           updatedAt: serverTimestamp(),
-        });
+        }, { merge: true });
         break;
       case 'delete':
         await deleteDoc(docRef);
