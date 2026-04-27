@@ -36,17 +36,20 @@ const processLocalData = (data: any, existingData: any = {}): any => {
     
     // Check if it's a Firestore FieldValue or complex object
     if (value && typeof value === 'object') {
-      // Handle increment
-      if (value._methodName?.includes('increment')) {
-        const amount = value._operand || value.bc || 0;
-        processed[key] = (existingData[key] || 0) + (typeof amount === 'number' ? amount : 0);
+      // Handle increment - be robust to different SDK internal structures
+      const isIncrement = value._methodName?.includes('increment') || 
+                          value.constructor?.name?.includes('NumericIncrement');
+      
+      if (isIncrement) {
+        const amount = value._operand !== undefined ? value._operand : (value.bc !== undefined ? value.bc : (value.amount !== undefined ? value.amount : 0));
+        processed[key] = (Number(existingData[key]) || 0) + (typeof amount === 'number' ? amount : 0);
       } 
       // Handle serverTimestamp or others
-      else if (value._methodName) {
-        processed[key] = existingData[key] || Date.now();
+      else if (value._methodName?.includes('serverTimestamp')) {
+        processed[key] = Date.now();
       }
       // Handle nested objects
-      else {
+      else if (!value._methodName) {
         processed[key] = processLocalData(value, existingData[key] || {});
       }
     }
@@ -55,7 +58,6 @@ const processLocalData = (data: any, existingData: any = {}): any => {
 };
 
 export async function offlineCreate(collectionName: string, data: any) {
-  const isOnline = navigator.onLine;
   const id = data.id || generateId();
   const timestamp = Date.now();
   
@@ -73,37 +75,20 @@ export async function offlineCreate(collectionName: string, data: any) {
     version: 1
   };
 
-  if (isOnline) {
-    try {
-      const docRef = doc(firestoreDb, collectionName, id);
-      // Add a timeout to the Firestore call
-      await Promise.race([
-        setDoc(docRef, {
-          ...data,
-          id,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
-      ]);
-      record.synced = true;
-      record.syncStatus = 'synced';
-    } catch (error) {
-      console.warn('Failed to save to Firestore while online, queuing for offline sync', error);
-      await addToQueue(collectionName, id, 'create', data);
-    }
-  } else {
-    await addToQueue(collectionName, id, 'create', data);
-  }
-
+  // 1. Save locally first (Immediate)
   await getTable(collectionName).put(record);
   
+  // 2. Add to sync queue for background processing
+  await addToQueue(collectionName, id, 'create', data);
+
+  // 3. Notify UI
   window.dispatchEvent(new CustomEvent('local-data-changed', { 
     detail: { collectionName } 
   }));
   
+  // 4. Background sync attempt if online
   if (navigator.onLine) {
-    syncEngine.syncPendingOperations();
+    syncEngine.syncPendingOperations().catch(err => console.warn('Background sync started but failed', err));
   }
   
   return id;
@@ -114,7 +99,6 @@ export async function getOfflineRecord(collectionName: string, id: string) {
 }
 
 export async function offlineUpdate(collectionName: string, id: string, data: any) {
-  const isOnline = navigator.onLine;
   const timestamp = Date.now();
   
   const existing = await getTable(collectionName).get(id);
@@ -133,66 +117,26 @@ export async function offlineUpdate(collectionName: string, id: string, data: an
     version: (existing?.version || 0) + 1
   };
 
-  if (isOnline) {
-    try {
-      const docRef = doc(firestoreDb, collectionName, id);
-      await Promise.race([
-        setDoc(docRef, {
-          ...data,
-          updatedAt: serverTimestamp(),
-        }, { merge: true }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
-      ]);
-      record.synced = true;
-      record.syncStatus = 'synced';
-    } catch (error) {
-      console.warn('Failed to update Firestore while online, queuing for offline sync', error);
-      await addToQueue(collectionName, id, 'update', data);
-    }
-  } else {
-    await addToQueue(collectionName, id, 'update', data);
-  }
-
+  // 1. Save locally first
   await getTable(collectionName).put(record);
   
+  // 2. Add to sync queue
+  await addToQueue(collectionName, id, 'update', data);
+
+  // 3. Notify UI
   window.dispatchEvent(new CustomEvent('local-data-changed', { 
     detail: { collectionName } 
   }));
   
+  // 4. Background sync if online
   if (navigator.onLine) {
-    syncEngine.syncPendingOperations();
+    syncEngine.syncPendingOperations().catch(err => console.warn('Background sync started but failed', err));
   }
 }
 
 export async function offlineDelete(collectionName: string, id: string) {
-  const isOnline = navigator.onLine;
-  
-  if (isOnline) {
-    try {
-      const docRef = doc(firestoreDb, collectionName, id);
-      await Promise.race([
-        deleteDoc(docRef),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
-      ]);
-      await getTable(collectionName).delete(id);
-      window.dispatchEvent(new CustomEvent('local-data-changed', { 
-        detail: { collectionName } 
-      }));
-    } catch (error) {
-      console.warn('Failed to delete from Firestore while online, queuing for offline sync', error);
-      await handleOfflineDelete(collectionName, id);
-    }
-  } else {
-    await handleOfflineDelete(collectionName, id);
-  }
-  
-  if (navigator.onLine) {
-    syncEngine.syncPendingOperations();
-  }
-}
-
-async function handleOfflineDelete(collectionName: string, id: string) {
   const existing = await getTable(collectionName).get(id);
+  
   if (existing) {
     const record: OfflineRecord = {
       ...existing,
@@ -201,12 +145,27 @@ async function handleOfflineDelete(collectionName: string, id: string) {
       operation: 'delete',
       updatedAt: Date.now()
     };
+    
+    // 1. Mark as deleted locally (but keep record for sync engine)
     await getTable(collectionName).put(record);
+    
+    // 2. Add to sync queue
     await addToQueue(collectionName, id, 'delete', null);
+    
+    // 3. Notify UI
     window.dispatchEvent(new CustomEvent('local-data-changed', { 
       detail: { collectionName } 
     }));
+    
+    // 4. Background sync
+    if (navigator.onLine) {
+      syncEngine.syncPendingOperations().catch(err => console.warn('Background sync started but failed', err));
+    }
   }
+}
+
+async function handleOfflineDelete(collectionName: string, id: string) {
+  // Logic merged into offlineDelete
 }
 
 async function addToQueue(collectionName: string, recordId: string, operation: SyncOperation, data: any) {
