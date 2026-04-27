@@ -61,12 +61,16 @@ export async function offlineCreate(collectionName: string, data: any) {
   if (isOnline) {
     try {
       const docRef = doc(firestoreDb, collectionName, id);
-      await setDoc(docRef, {
-        ...data,
-        id,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
+      // Add a timeout to the Firestore call
+      await Promise.race([
+        setDoc(docRef, {
+          ...data,
+          id,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+      ]);
       record.synced = true;
       record.syncStatus = 'synced';
     } catch (error) {
@@ -84,6 +88,10 @@ export async function offlineCreate(collectionName: string, data: any) {
   }
   
   return id;
+}
+
+export async function getOfflineRecord(collectionName: string, id: string) {
+  return await getTable(collectionName).get(id);
 }
 
 export async function offlineUpdate(collectionName: string, id: string, data: any) {
@@ -109,10 +117,13 @@ export async function offlineUpdate(collectionName: string, id: string, data: an
   if (isOnline) {
     try {
       const docRef = doc(firestoreDb, collectionName, id);
-      await updateDoc(docRef, {
-        ...data,
-        updatedAt: serverTimestamp(),
-      });
+      await Promise.race([
+        updateDoc(docRef, {
+          ...data,
+          updatedAt: serverTimestamp(),
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+      ]);
       record.synced = true;
       record.syncStatus = 'synced';
     } catch (error) {
@@ -136,7 +147,10 @@ export async function offlineDelete(collectionName: string, id: string) {
   if (isOnline) {
     try {
       const docRef = doc(firestoreDb, collectionName, id);
-      await deleteDoc(docRef);
+      await Promise.race([
+        deleteDoc(docRef),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+      ]);
       await getTable(collectionName).delete(id);
     } catch (error) {
       console.warn('Failed to delete from Firestore while online, queuing for offline sync', error);

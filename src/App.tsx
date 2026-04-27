@@ -105,6 +105,7 @@ import {
   offlineCreate, 
   offlineUpdate, 
   offlineDelete,
+  getOfflineRecord,
   generateId 
 } from './offline/offlineRepository';
 import { useOfflineCollection } from './offline/useOfflineCollection';
@@ -5556,55 +5557,93 @@ export default function App() {
     if (!user) return;
 
     const ensureUserProfile = async () => {
-      const userRef = doc(db, 'users', user.uid);
-      try {
-        const docSnap = await getDoc(userRef);
-        if (!docSnap.exists()) {
-          // Check if there's a profile with this email but different ID (e.g. email or random ID)
-          const q = query(collection(db, 'users'), where('email', '==', user.email));
-          const querySnap = await getDocs(q);
-          
-          if (!querySnap.empty) {
-            // Found a profile created by admin
-            const existingDoc = querySnap.docs[0];
-            const data = existingDoc.data();
-            // Create new doc with UID as ID, ensuring all required fields exist
-            await offlineUpdate('users', user.uid, {
-              role: 'user',
-              isActive: false,
-              allowedScreens: [],
-              permissions: {},
-              ...data,
-              uid: user.uid,
-              email: user.email // Ensure email is correct
-            });
-            // Delete old doc if it's not the same as the new one
-            if (existingDoc.id !== user.uid) {
-              await offlineDelete('users', existingDoc.id);
-            }
-          } else if (user.email === 'yahia167199@gmail.com' || user.email === 'moy915996@gmail.com') {
-            // Create new profile ONLY for primary admins
-            await offlineUpdate('users', user.uid, {
-              uid: user.uid,
-              email: user.email,
-              displayName: user.displayName || '',
-              role: 'admin',
-              isActive: true,
-              allowedScreens: [],
-              permissions: {}
-            });
-          }
-        } else {
-          // Profile exists, update email/displayName if needed
-          await offlineUpdate('users', user.uid, {
-            email: user.email,
-            displayName: user.displayName || docSnap.data().displayName || ''
-          });
-        }
+      // 1. Try to find profile in local database first for speed and offline support
+      const localProfile = await getOfflineRecord('users', user.uid);
+      if (localProfile) {
         setIsProfileReady(true);
         setIsUsersLoaded(true);
-      } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
+        
+        // If online, we can tentatively update from Firestore in background
+        if (navigator.onLine) {
+          try {
+            const userRef = doc(db, 'users', user.uid);
+            const docSnap = await Promise.race([
+              getDoc(userRef),
+              new Promise<any>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
+            ]);
+            if (docSnap.exists()) {
+              await offlineUpdate('users', user.uid, {
+                email: user.email,
+                displayName: user.displayName || docSnap.data().displayName || ''
+              });
+            }
+          } catch (e) {
+            console.warn('Background profile sync failed', e);
+          }
+        }
+        return;
+      }
+
+      // 2. If not found locally, we must check Firestore
+      if (navigator.onLine) {
+        const userRef = doc(db, 'users', user.uid);
+        try {
+          const docSnap = await Promise.race([
+            getDoc(userRef),
+            new Promise<any>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+          ]);
+          
+          if (!docSnap.exists()) {
+            // Check if there's a profile with this email but different ID (e.g. email or random ID)
+            const q = query(collection(db, 'users'), where('email', '==', user.email));
+            const querySnap = await Promise.race([
+              getDocs(q),
+              new Promise<any>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+            ]);
+            
+            if (!querySnap.empty) {
+              const existingDoc = querySnap.docs[0];
+              const data = existingDoc.data();
+              await offlineUpdate('users', user.uid, {
+                role: 'user',
+                isActive: false,
+                allowedScreens: [],
+                permissions: {},
+                ...data,
+                uid: user.uid,
+                email: user.email
+              });
+              if (existingDoc.id !== user.uid) {
+                await offlineDelete('users', existingDoc.id);
+              }
+            } else if (user.email === 'yahia167199@gmail.com' || user.email === 'moy915996@gmail.com') {
+              await offlineUpdate('users', user.uid, {
+                uid: user.uid,
+                email: user.email,
+                displayName: user.displayName || '',
+                role: 'admin',
+                isActive: true,
+                allowedScreens: [],
+                permissions: {}
+              });
+            }
+          } else {
+            await offlineUpdate('users', user.uid, {
+              email: user.email,
+              displayName: user.displayName || docSnap.data().displayName || ''
+            });
+          }
+          setIsProfileReady(true);
+          setIsUsersLoaded(true);
+        } catch (err) {
+          console.error('Initial profile fetch failed', err);
+          // If it fails (e.g. timeout), let's still set loaded so they aren't stuck
+          // but we won't have a profile yet which will show "Unauthorized"
+          setIsUsersLoaded(true);
+        }
+      } else {
+        // Offline and no local profile - user is stuck until they go online at least once
+        setIsUsersLoaded(true);
       }
     };
     
