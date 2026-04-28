@@ -1,7 +1,7 @@
 
 import Dexie, { type Table } from 'dexie';
 
-export type SyncStatus = 'pending' | 'synced' | 'failed' | 'conflict';
+export type SyncStatus = 'pending' | 'syncing' | 'synced' | 'failed' | 'conflict';
 export type SyncOperation = 'create' | 'update' | 'delete';
 
 export interface OfflineRecord<T = any> {

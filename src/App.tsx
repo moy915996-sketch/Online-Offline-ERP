@@ -446,8 +446,8 @@ const Dashboard = ({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <Card className="p-6">
           <h4 className={cn("text-base font-semibold text-slate-900 mb-6 dark:text-white", language === 'ar' ? 'text-right' : 'text-left')}>{t('salesLast7Days')}</h4>
-          <div className="h-[300px] w-full min-w-0">
-            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+          <div className="h-[300px] w-full min-w-0 relative">
+            <ResponsiveContainer width="100%" height="100%" debounce={1}>
               <BarChart data={salesData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                 <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
@@ -464,8 +464,8 @@ const Dashboard = ({
 
         <Card className="p-6">
           <h4 className={cn("text-base font-semibold text-slate-900 mb-6 dark:text-white", language === 'ar' ? 'text-right' : 'text-left')}>{t('topProductsInStock')}</h4>
-          <div className="h-[300px] w-full min-w-0">
-            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+          <div className="h-[300px] w-full min-w-0 relative">
+            <ResponsiveContainer width="100%" height="100%" debounce={1}>
               <PieChart>
                 <Pie
                   data={stockData}

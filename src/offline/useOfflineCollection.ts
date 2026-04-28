@@ -22,9 +22,13 @@ const sanitizeData = (data: any): any => {
   for (const key in sanitized) {
     const value = sanitized[key];
     if (value && typeof value === 'object') {
-      // Check for FieldValue.increment
-      if (value._methodName?.includes('increment')) {
-        sanitized[key] = value._operand || value.bc || 0;
+      // Check for FieldValue.increment - robust detection
+      const isIncrement = value._methodName?.includes('increment') || 
+                          value.constructor?.name?.includes('NumericIncrement');
+      
+      if (isIncrement) {
+        const amount = value._operand !== undefined ? value._operand : (value.bc !== undefined ? value.bc : (value.amount !== undefined ? value.amount : 0));
+        sanitized[key] = amount;
       }
       // Check for serverTimestamp (Timestamp object)
       else if (value.seconds !== undefined && value.nanoseconds !== undefined) {
